@@ -203,7 +203,8 @@ function showContextMenu(clientX, clientY) {
   // model, so navigator.clipboard.write() succeeds in the parent.
   const ENTRIES = [
     { id: 'copy-bitmap', label: 'Copy as bitmap' },
-    { id: 'copy-svg',    label: 'Copy as SVG' }
+    { id: 'copy-svg',    label: 'Copy as SVG' },
+    { id: 'open-in-tab', label: 'Open in new tab' }
   ];
   for (const entry of ENTRIES) {
     const li = document.createElement('li');

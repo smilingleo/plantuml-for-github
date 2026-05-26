@@ -357,6 +357,50 @@
   }
 
   // ------------------------------------------------------------------
+  // "Open in new tab" -- request the SVG string from the given iframe,
+  // build a data: URL, and open it in a new browser tab so the user can
+  // view the full diagram, save it, or zoom in freely.
+  // ------------------------------------------------------------------
+  async function openSvgInNewTab(iframe) {
+    const svgReqId = `svg-tab-${++svgCounter}-${Date.now()}`;
+    TRACE('openSvgInNewTab, requestId=' + svgReqId);
+
+    let resolveStr, rejectStr;
+    const svgPromise = new Promise((resolve, reject) => {
+      resolveStr = resolve;
+      rejectStr  = reject;
+    });
+    const timeoutId = setTimeout(() => {
+      if (pendingSvgRequests.has(svgReqId)) {
+        pendingSvgRequests.delete(svgReqId);
+        rejectStr(new Error('SVG fetch timed out after 10s'));
+      }
+    }, 10000);
+    pendingSvgRequests.set(svgReqId, {
+      resolve: (svg) => { clearTimeout(timeoutId); resolveStr(svg); },
+      reject:  (err) => { clearTimeout(timeoutId); rejectStr(err); }
+    });
+
+    iframe.contentWindow.postMessage({
+      type: 'PLANTUML_COPY_SVG',
+      requestId: svgReqId
+    }, targetOriginFor(iframe));
+    TRACE('PLANTUML_COPY_SVG posted for open-in-tab, requestId=' + svgReqId);
+
+    try {
+      const svg = await svgPromise;
+      const blob = new Blob([svg], { type: 'image/svg+xml' });
+      const url = URL.createObjectURL(blob);
+      const tab = window.open(url, '_blank');
+      if (tab) tab.addEventListener('load', () => URL.revokeObjectURL(url), { once: true });
+      TRACE('open-in-tab succeeded, requestId=' + svgReqId);
+    } catch (err) {
+      TRACE('open-in-tab failed for requestId=' + svgReqId + ':', err);
+      pendingSvgRequests.delete(svgReqId);
+    }
+  }
+
+  // ------------------------------------------------------------------
   // "Copy as bitmap" -- request the PNG blob from the given iframe and
   // write it to the clipboard as image/png. Silent on success/failure;
   // errors are only logged. Used by the renderer's context menu. The
@@ -943,6 +987,8 @@
         copySvgFromIframe(sourceIframe);
       } else if (data.action === 'copy-bitmap') {
         copyBitmapFromIframe(sourceIframe);
+      } else if (data.action === 'open-in-tab') {
+        openSvgInNewTab(sourceIframe);
       } else {
         TRACE('PLANTUML_CTX_MENU_ACTION: unknown action ' + data.action);
       }
