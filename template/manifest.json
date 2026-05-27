@@ -56,7 +56,7 @@
         "vendor/plantuml.6.js",
 #endif
         "vendor/viz-global.js",
-        "vendor/c4.min.js"
+        "c4.min.js"
       ],
       "matches": ["https://github.com/*"]
     }

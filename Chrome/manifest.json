@@ -32,9 +32,9 @@
       "resources": [
         "renderer.html",
         "renderer.js",
+        "c4.min.js",
         "vendor/plantuml.js",
-        "vendor/viz-global.js",
-        "vendor/c4.min.js"
+        "vendor/viz-global.js"
       ],
       "matches": ["https://github.com/*"]
     }

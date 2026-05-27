@@ -41,6 +41,7 @@ FILES = {
     "content.js":            CHROME_DIR / "content.js",
     "renderer.html":         CHROME_DIR / "renderer.html",
     "renderer.js":           CHROME_DIR / "renderer.js",
+    "c4.min.js":             CHROME_DIR / "c4.min.js",
     "icons/icon16.png":      CHROME_DIR / "icons" / "icon16.png",
     "icons/icon48.png":      CHROME_DIR / "icons" / "icon48.png",
     "icons/icon128.png":     CHROME_DIR / "icons" / "icon128.png",

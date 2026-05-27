@@ -47,6 +47,7 @@ FILES = {
     "content.js":            FIREFOX_DIR / "content.js",
     "renderer.html":         FIREFOX_DIR / "renderer.html",
     "renderer.js":           FIREFOX_DIR / "renderer.js",
+    "c4.min.js":             FIREFOX_DIR / "c4.min.js",
     "icons/icon16.png":      FIREFOX_DIR / "icons" / "icon16.png",
     "icons/icon48.png":      FIREFOX_DIR / "icons" / "icon48.png",
     "icons/icon128.png":     FIREFOX_DIR / "icons" / "icon128.png",
