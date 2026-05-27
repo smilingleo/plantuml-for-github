@@ -48,7 +48,8 @@
         "vendor/plantuml.4.js",
         "vendor/plantuml.5.js",
         "vendor/plantuml.6.js",
-        "vendor/viz-global.js"
+        "vendor/viz-global.js",
+        "vendor/c4.min.js"
       ],
       "matches": ["https://github.com/*"]
     }

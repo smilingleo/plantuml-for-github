@@ -33,7 +33,8 @@
         "renderer.html",
         "renderer.js",
         "vendor/plantuml.js",
-        "vendor/viz-global.js"
+        "vendor/viz-global.js",
+        "vendor/c4.min.js"
       ],
       "matches": ["https://github.com/*"]
     }
