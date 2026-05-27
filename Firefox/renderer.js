@@ -344,12 +344,19 @@ function renderDiagram(source, dark) {
       // CSS scaling (max-width:100%; height:auto).  sizes.h is the SVG's
       // intrinsic/unscaled height — it can be much larger than the rendered
       // height when the diagram is wide and gets scaled down, so we don't
-      // use it here.  body.scrollHeight covers body padding (8px top+bottom)
-      // and is a reliable floor when rectH hasn't settled yet.
+      // use it here.
+      // Add explicit body padding (8px top + 8px bottom = 16px) so the
+      // iframe is never 1-2px short due to subpixel rounding.
+      const bodyStyle = getComputedStyle(document.body);
+      const bodyPad = parseFloat(bodyStyle.paddingTop) + parseFloat(bodyStyle.paddingBottom);
       const bodyH = document.body.scrollHeight;
-      const measured = Math.max(sizes.rectH || 0, sizes.scrollH || 0, bodyH || 0);
+      const measured = Math.max(
+        (sizes.rectH || 0) + bodyPad,
+        sizes.scrollH || 0,
+        bodyH || 0
+      );
       TRACE('finish: svg sizes', sizes,
-            ' bodyH=' + bodyH +
+            ' bodyPad=' + bodyPad + ' bodyH=' + bodyH +
             ' -> chosen height=' + measured);
       resolve({ svg: output.innerHTML, height: Math.ceil(measured) });
     }
