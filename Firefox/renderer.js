@@ -203,8 +203,7 @@ function showContextMenu(clientX, clientY) {
   // model, so navigator.clipboard.write() succeeds in the parent.
   const ENTRIES = [
     { id: 'copy-bitmap', label: 'Copy as bitmap' },
-    { id: 'copy-svg',    label: 'Copy as SVG' },
-    { id: 'open-in-tab', label: 'Open in new tab' }
+    { id: 'copy-svg',    label: 'Copy as SVG' }
   ];
   for (const entry of ENTRIES) {
     const li = document.createElement('li');
@@ -341,18 +340,16 @@ function renderDiagram(source, dark) {
       if (!svgEl) return; // nothing to do
       observer.disconnect();
       const sizes = readSize(svgEl);
-      // The host iframe needs to fit the entire <body>, not just the SVG
-      // — there's padding on <html>/<body> that adds to the total height.
-      // documentElement.scrollHeight gives the full content height of the
-      // iframe document, padding included.
-      const docH = document.documentElement.scrollHeight;
+      // sizes.rectH is the actual rendered height of the SVG element after
+      // CSS scaling (max-width:100%; height:auto).  sizes.h is the SVG's
+      // intrinsic/unscaled height — it can be much larger than the rendered
+      // height when the diagram is wide and gets scaled down, so we don't
+      // use it here.  body.scrollHeight covers body padding (8px top+bottom)
+      // and is a reliable floor when rectH hasn't settled yet.
       const bodyH = document.body.scrollHeight;
-      const measured = Math.max(
-        sizes.h || 0, sizes.rectH || 0, sizes.scrollH || 0,
-        docH || 0, bodyH || 0
-      );
+      const measured = Math.max(sizes.rectH || 0, sizes.scrollH || 0, bodyH || 0);
       TRACE('finish: svg sizes', sizes,
-            ' docH=' + docH + ' bodyH=' + bodyH +
+            ' bodyH=' + bodyH +
             ' -> chosen height=' + measured);
       resolve({ svg: output.innerHTML, height: Math.ceil(measured) });
     }
