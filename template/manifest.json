@@ -29,7 +29,7 @@
       "matches": [
         "https://github.com/*"
       ],
-      "js": ["content.js"],
+      "js": ["notes.js", "content.js"],
       "run_at": "document_idle"
     }
   ],

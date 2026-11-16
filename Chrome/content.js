@@ -439,10 +439,15 @@
     }
   }
 
-  function processBlock(blockEl) {
-    blockEl.classList.add(PROCESSED_CLASS);
+  // opts.source  -- use this PlantUML text instead of reading blockEl.
+  // opts.inPlace -- leave blockEl where it is (it belongs to GitHub's
+  //                 React tree, which must not be re-parented) and only
+  //                 hide/show it next to the wrapper. Returns the wrapper.
+  function processBlock(blockEl, opts) {
+    opts = opts || {};
+    if (!opts.inPlace) blockEl.classList.add(PROCESSED_CLASS);
 
-    const source = extractSource(blockEl);
+    const source = opts.source != null ? opts.source : extractSource(blockEl);
     TRACE('processBlock: tag=' + blockEl.tagName +
           ' class="' + blockEl.className + '"' +
           ' source.len=' + (source ? source.length : 0) +
@@ -461,13 +466,16 @@
     // GitHub's syntax-highlighting intact and lets us toggle visibility
     // between the rendered diagram and the original source.
     blockEl.parentNode.insertBefore(wrapper, blockEl);
-    wrapper.appendChild(blockEl);
-    // The original block already has padding/background from GitHub.
-    // Strip its outer margin and rounded corners so it sits flush inside
-    // our wrapper, and hide it by default (diagram view is the default).
-    blockEl.style.margin = '0';
-    blockEl.style.borderRadius = '0';
-    blockEl.style.border = 'none';
+    if (!opts.inPlace) {
+      wrapper.appendChild(blockEl);
+      // The original block already has padding/background from GitHub.
+      // Strip its outer margin and rounded corners so it sits flush inside
+      // our wrapper.
+      blockEl.style.margin = '0';
+      blockEl.style.borderRadius = '0';
+      blockEl.style.border = 'none';
+    }
+    // Hidden by default: diagram view is the default.
     blockEl.style.display = 'none';
     TRACE('processBlock: iframe inserted, requestId=' + requestId + ' dark=' + dark);
 
@@ -928,6 +936,542 @@
     iframe.addEventListener('error', (e) => {
       TRACE('iframe ERROR event', e);
     });
+    return wrapper;
+  }
+
+  // ==================================================================
+  // .puml FILES
+  // ==================================================================
+  const PUML_EXT_RE = /\.(puml|plantuml|pu|iuml|wsd)$/i;
+  // /<owner>/<repo>/blob/<40-hex sha>/<path>  (the "View file" link in a PR)
+  const BLOB_SHA_HREF_RE = /^\/([^/]+)\/([^/]+)\/blob\/([0-9a-f]{40})\/(.+)$/;
+  const NOTES = globalThis.PUML4GH_NOTES;
+
+  function newRendererIframe(title) {
+    const fr = document.createElement('iframe');
+    fr.src = RENDERER_URL;
+    fr.sandbox = 'allow-scripts';
+    fr.setAttribute('title', title);
+    return fr;
+  }
+
+  // Resolves when PLANTUML_RESULT/ERROR for this render comes back.
+  // Bounded by a timeout so a wedged renderer can't hang the caller.
+  let modalRenderCounter = 0;
+  function renderInIframe(iframe, source, dark, timeoutMs) {
+    return new Promise((resolve) => {
+      const requestId = 'puml-review-' + (++modalRenderCounter) + '-' + Date.now();
+      const timer = setTimeout(() => {
+        window.removeEventListener('message', onMsg);
+        resolve({ type: 'PLANTUML_ERROR', error: 'Rendering timed out', syntaxError: false });
+      }, timeoutMs || 20000);
+      function onMsg(event) {
+        if (event.source !== iframe.contentWindow) return;
+        const d = event.data;
+        if (!d || d.requestId !== requestId) return;
+        if (d.type !== 'PLANTUML_RESULT' && d.type !== 'PLANTUML_ERROR') return;
+        clearTimeout(timer);
+        window.removeEventListener('message', onMsg);
+        resolve(d);
+      }
+      window.addEventListener('message', onMsg);
+      iframe.contentWindow.postMessage({
+        type: 'PLANTUML_RENDER', source, requestId, options: { dark }
+      }, targetOriginFor(iframe));
+    });
+  }
+
+  // fetch() with a hard timeout; rejects on non-2xx.
+  async function fetchWithTimeout(url, ms, init) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), ms);
+    try {
+      const res = await fetch(url, Object.assign({ credentials: 'same-origin', signal: ctrl.signal }, init || {}));
+      if (!res.ok) throw new Error('HTTP ' + res.status + ' for ' + url);
+      return await res.text();
+    } catch (err) {
+      if (err && err.name === 'AbortError') throw new Error('Timed out after ' + (ms / 1000) + 's: ' + url);
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // 1. Blob view: /<owner>/<repo>/blob/<ref>/<path>.puml
+  //
+  // GitHub's React code view keeps the whole file in a hidden textarea
+  // (#read-only-cursor-text-area) and renders lines inside
+  // .react-code-file-contents. We put the diagram above the code and hide
+  // the code section; the wrapper's toggle button shows it again.
+  // The code view is a SPA: navigating to another file swaps the content
+  // without a page load, so we key the mounted diagram by path + source
+  // and remount when either changes.
+  // ------------------------------------------------------------------
+  let blobState = null; // { key, wrapper, section }
+
+  function teardownBlobView() {
+    if (!blobState) return;
+    blobState.wrapper.remove();
+    if (blobState.section.isConnected) blobState.section.style.display = '';
+    blobState = null;
+  }
+
+  function checkBlobView() {
+    const path = decodeURIComponent(location.pathname);
+    const isPumlBlob = /^\/[^/]+\/[^/]+\/blob\//.test(path) && PUML_EXT_RE.test(path) &&
+                       !/[?&]plain=1\b/.test(location.search);
+    const ta = isPumlBlob ? document.getElementById('read-only-cursor-text-area') : null;
+    const code = ta ? document.querySelector('.react-code-file-contents') : null;
+    const section = code ? (code.closest('section') || code) : null;
+    const source = ta ? ta.value : '';
+    const key = path + '\n' + source;
+
+    if (blobState && (blobState.key !== key || blobState.section !== section ||
+                      !blobState.wrapper.isConnected)) {
+      TRACE('blob view changed, tearing down diagram');
+      teardownBlobView();
+    }
+    if (blobState || !section || !/@start\w+/i.test(source)) return;
+
+    TRACE('blob view: rendering ' + path);
+    const wrapper = processBlock(section, { source: source.trim(), inPlace: true });
+    if (!wrapper) return;
+    blobState = { key, wrapper, section };
+    clearBlobToolbar(wrapper);
+  }
+
+  // The Code/Blame toolbar is absolutely positioned inside a zero-height
+  // sticky container; GitHub's code section reserves space for it with its
+  // own padding. Our wrapper replaces that section visually, so push it
+  // down by however much the toolbar overlaps it.
+  function clearBlobToolbar(wrapper) {
+    const bar = document.querySelector('.react-blob-view-header-sticky');
+    if (!bar) return;
+    let bottom = 0;
+    bar.querySelectorAll('*').forEach((el) => {
+      const r = el.getBoundingClientRect();
+      if (r.height) bottom = Math.max(bottom, r.bottom);
+    });
+    const overlap = bottom - wrapper.getBoundingClientRect().top;
+    if (overlap > 0) wrapper.style.marginTop = (16 + Math.ceil(overlap)) + 'px';
+    TRACE('blob toolbar overlap=' + overlap);
+  }
+
+  // ------------------------------------------------------------------
+  // 2. PR diff: add "View diagram" to a .puml file's "..." menu.
+  //
+  // Two GitHub UIs are handled:
+  //   - new React "Files changed" (/pull/N/changes): Primer ActionMenu
+  //     rendered on open into a portal: ul[role=menu] > li > a[role=menuitem]
+  //   - classic (/pull/N/files): details-menu[role=menu] > a.dropdown-item
+  // In both, the "View file" entry links to /<o>/<r>/blob/<head sha>/<path>,
+  // which tells us the file and the exact commit to render. We match on
+  // that href rather than on the (localisable) label.
+  // ------------------------------------------------------------------
+  const MENU_ITEM_CLASS = 'plantuml-for-github-view-diagram';
+  const ICON_DIAGRAM =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">' +
+    '<path d="M1 2.75C1 1.784 1.784 1 2.75 1h3.5C7.216 1 8 1.784 8 2.75v1.5A1.75 1.75 0 0 1 6.25 6H5.25v2.25h3.5V7.75C8.75 6.784 9.534 6 10.5 6h2.75c.966 0 1.75.784 1.75 1.75v1.5A1.75 1.75 0 0 1 13.25 11H10.5a1.75 1.75 0 0 1-1.75-1.75V9.75h-3.5v2.75h1c.966 0 1.75.784 1.75 1.75v.5A1.75 1.75 0 0 1 6.25 16h-3.5A1.75 1.75 0 0 1 1 14.75v-.5c0-.966.784-1.75 1.75-1.75h1V6h-1A1.75 1.75 0 0 1 1 4.25Zm1.75-.25a.25.25 0 0 0-.25.25v1.5c0 .138.112.25.25.25h3.5a.25.25 0 0 0 .25-.25v-1.5a.25.25 0 0 0-.25-.25Zm7.75 6a.25.25 0 0 0-.25.25v1.5c0 .138.112.25.25.25h2.75a.25.25 0 0 0 .25-.25v-1.5a.25.25 0 0 0-.25-.25ZM2.75 14a.25.25 0 0 0-.25.25v.5c0 .138.112.25.25.25h3.5a.25.25 0 0 0 .25-.25v-.5a.25.25 0 0 0-.25-.25Z"/>' +
+    '</svg>';
+
+  function isPullRequestPage() {
+    return /^\/[^/]+\/[^/]+\/pull\/\d+/.test(location.pathname);
+  }
+
+  function augmentFileMenus() {
+    if (!isPullRequestPage()) return;
+    document.querySelectorAll('ul[role="menu"], details-menu[role="menu"]').forEach((menu) => {
+      if (menu.querySelector('.' + MENU_ITEM_CLASS)) return;
+      const viewFile = [...menu.querySelectorAll('a[role="menuitem"][href]')].find((a) => {
+        const m = BLOB_SHA_HREF_RE.exec(a.getAttribute('href'));
+        return m && PUML_EXT_RE.test(m[4]);
+      });
+      if (!viewFile) return;
+      const m = BLOB_SHA_HREF_RE.exec(viewFile.getAttribute('href'));
+      const info = {
+        owner: m[1], repo: m[2], sha: m[3],
+        path: decodeURIComponent(m[4]),
+        menu
+      };
+      injectViewDiagramItem(menu, viewFile, info);
+    });
+  }
+
+  function injectViewDiagramItem(menu, viewFile, info) {
+    // Clone the existing entry so we inherit GitHub's exact styling.
+    const host = viewFile.parentElement && viewFile.parentElement.matches('li') ? viewFile.parentElement : viewFile;
+    const item = host.cloneNode(true);
+    item.classList.add(MENU_ITEM_CLASS);
+    const link = item.matches('a') ? item : item.querySelector('a[role="menuitem"]');
+    link.setAttribute('href', '#');
+    link.setAttribute('tabindex', '-1');
+    ['id', 'aria-keyshortcuts', 'aria-labelledby', 'data-hotkey'].forEach((a) => link.removeAttribute(a));
+    link.querySelectorAll('[id]').forEach((el) => el.removeAttribute('id'));
+    link.setAttribute('aria-label', 'View diagram');
+
+    // Replace the label: the first non-empty text node becomes our label,
+    // the rest are cleared (keeps whatever wrapper spans GitHub uses).
+    const walker = document.createTreeWalker(link, NodeFilter.SHOW_TEXT);
+    let labelled = false;
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      if (!n.nodeValue.trim()) continue;
+      n.nodeValue = labelled ? '' : 'View diagram';
+      labelled = true;
+    }
+    if (!labelled) link.appendChild(document.createTextNode('View diagram'));
+    const icon = link.querySelector('svg');
+    if (icon) icon.outerHTML = ICON_DIAGRAM;
+
+    link.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      TRACE('View diagram clicked for ' + info.path + ' @ ' + info.sha);
+      closeMenu(menu);
+      openReviewDiagram(info);
+    });
+    host.after(item);
+    TRACE('View diagram menu item injected for ' + info.path);
+  }
+
+  function closeMenu(menu) {
+    const details = menu.closest('details');
+    if (details) { details.removeAttribute('open'); return; }
+    // Primer ActionMenu closes on Escape.
+    menu.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true }));
+  }
+
+  // ------------------------------------------------------------------
+  // Review threads for one file.
+  //
+  // Returns { threads: [{ line, side: 'R'|'L', resolved, comments: [{author, body}] }], from }
+  //
+  // Sources, best first:
+  //   a) a fresh fetch of the current PR page, reading the embedded React
+  //      payload (diffSummaries[].markersMap + markers.threads). Fresh
+  //      means threads resolved after the page loaded are excluded.
+  //   b) the same payload embedded in the current document (as loaded).
+  //   c) the rendered DOM (classic view, or React view if the payload
+  //      format ever changes).
+  // ------------------------------------------------------------------
+  function threadsFromPayloadJson(jsonText, path) {
+    let data;
+    try { data = JSON.parse(jsonText); } catch (e) { return null; }
+    let route = null;
+    (function walk(o, depth) {
+      if (route || !o || typeof o !== 'object' || depth > 4) return;
+      if (Array.isArray(o.diffSummaries) && o.markers && o.markers.threads) { route = o; return; }
+      for (const k of Object.keys(o)) walk(o[k], depth + 1);
+    })(data, 0);
+    if (!route) return null;
+    const summary = route.diffSummaries.find((s) => s && s.path === path);
+    if (!summary) return null;
+    const out = [];
+    for (const [key, marker] of Object.entries(summary.markersMap || {})) {
+      const km = /^([LR])(\d+)$/.exec(key);
+      if (!km || !marker || !Array.isArray(marker.threads)) continue;
+      for (const ref of marker.threads) {
+        const t = route.markers.threads[String(ref.id)];
+        if (!t) continue;
+        const comments = ((t.commentsData && t.commentsData.comments) || [])
+          .filter((c) => !c.isHidden && !c.minimizedReason)
+          .map((c) => ({ author: (c.author && c.author.login) || 'unknown', body: c.body || '' }));
+        if (comments.length) {
+          out.push({ line: parseInt(km[2], 10), side: km[1], resolved: !!t.isResolved, comments });
+        }
+      }
+    }
+    return out;
+  }
+
+  function embeddedPayloadFromHtml(html) {
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    return [...doc.querySelectorAll('script[data-target="react-app.embeddedData"]')].map((s) => s.textContent);
+  }
+
+  async function sha256Hex(text) {
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+    return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+  }
+
+  function commentsFromThreadEl(threadEl) {
+    const comments = [];
+    threadEl.querySelectorAll('.js-comment-body, .markdown-body').forEach((body) => {
+      if (body.parentElement.closest('.js-comment-body, .markdown-body')) return; // nested
+      let author = 'unknown';
+      for (let el = body.parentElement; el && el !== threadEl.parentElement; el = el.parentElement) {
+        const a = el.querySelector('.author, [data-testid="avatar-link"], [data-testid="avatar-name"]');
+        if (a) { author = a.textContent.trim(); break; }
+      }
+      const text = body.innerText.trim();
+      if (text) comments.push({ author, body: text });
+    });
+    return comments;
+  }
+
+  async function threadsFromDom(path) {
+    const out = [];
+    // New React view: the file's table carries data-diff-anchor="diff-<sha256(path)>".
+    const digest = await sha256Hex(path);
+    const table = document.querySelector('table[data-diff-anchor="diff-' + digest + '"]');
+    if (table) {
+      table.querySelectorAll('[data-testid="review-thread"]').forEach((th) => {
+        const cell = th.closest('td[data-line-number][data-diff-side]');
+        if (!cell) return;
+        const resolveBtn = th.closest('td').querySelector('[data-testid="unified-comment-resolve-button"]');
+        const resolved = !!resolveBtn && /unresolve/i.test(resolveBtn.textContent);
+        const comments = commentsFromThreadEl(th);
+        if (comments.length) {
+          out.push({
+            line: parseInt(cell.dataset.lineNumber, 10),
+            side: cell.dataset.diffSide === 'left' ? 'L' : 'R',
+            resolved, comments
+          });
+        }
+      });
+      return out;
+    }
+    // Classic view.
+    const header = [...document.querySelectorAll('.file-header[data-path]')].find((h) => h.dataset.path === path);
+    const file = header && header.closest('.file');
+    if (!file) return null;
+    file.querySelectorAll('.js-resolvable-timeline-thread-container, review-thread-collapsible').forEach((th) => {
+      if (th.parentElement.closest('.js-resolvable-timeline-thread-container, review-thread-collapsible')) return;
+      const row = th.closest('tr');
+      const prev = row && row.previousElementSibling;
+      if (!prev) return;
+      const r = prev.querySelector('td.js-blob-rnum[data-line-number]');
+      const l = prev.querySelector('td[data-line-number]');
+      const cell = r || l;
+      if (!cell) return;
+      const comments = commentsFromThreadEl(th);
+      if (comments.length) {
+        out.push({
+          line: parseInt(cell.dataset.lineNumber, 10),
+          side: r ? 'R' : 'L',
+          resolved: th.dataset.resolved === 'true',
+          comments
+        });
+      }
+    });
+    return out;
+  }
+
+  async function collectThreads(path) {
+    const inline = [...document.querySelectorAll('script[data-target="react-app.embeddedData"]')]
+      .map((s) => s.textContent).filter((t) => t.includes('"diffSummaries"'));
+    if (inline.length) {
+      try {
+        const html = await fetchWithTimeout(location.href, 8000);
+        for (const json of embeddedPayloadFromHtml(html)) {
+          const threads = threadsFromPayloadJson(json, path);
+          if (threads) return { threads, from: 'page data (fresh)' };
+        }
+        TRACE('collectThreads: fresh payload had no data for ' + path);
+      } catch (err) {
+        TRACE('collectThreads: fresh fetch failed, using loaded data:', err);
+      }
+      for (const json of inline) {
+        const threads = threadsFromPayloadJson(json, path);
+        if (threads) return { threads, from: 'page data (as loaded)' };
+      }
+    }
+    const dom = await threadsFromDom(path);
+    if (dom) return { threads: dom, from: 'page' };
+    return { threads: [], from: 'none' };
+  }
+
+  // ------------------------------------------------------------------
+  // Review diagram modal: head version of the file, rendered with every
+  // open (unresolved) review thread as a note, plus a side panel listing
+  // the threads and where each one ended up.
+  // ------------------------------------------------------------------
+  function smallButton(t, html, title) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.title = title;
+    b.setAttribute('aria-label', title);
+    b.innerHTML = html;
+    b.style.cssText =
+      'display: inline-flex; align-items: center; justify-content: center; gap: 6px; ' +
+      'min-width: 28px; height: 28px; padding: 0 8px; ' +
+      'background: transparent; border: 1px solid ' + t.borderCol + '; ' +
+      'border-radius: 6px; cursor: pointer; ' +
+      'font: 12px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; ' +
+      'color: ' + t.wrapperFg + ';';
+    b.addEventListener('mouseenter', () => { b.style.background = t.borderCol; });
+    b.addEventListener('mouseleave', () => { b.style.background = 'transparent'; });
+    return b;
+  }
+
+  async function openReviewDiagram(info) {
+    const dark = isDarkMode();
+    const t = dark ? THEME.dark : THEME.light;
+    const fg = dark ? '#e6edf3' : '#1f2328';
+    const font = '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+
+    const backdrop = document.createElement('div');
+    backdrop.className = 'plantuml-for-github-review-backdrop';
+    backdrop.style.cssText =
+      'position: fixed; inset: 0; z-index: 2147483647; background: rgba(0, 0, 0, 0.5); ' +
+      'display: flex; align-items: center; justify-content: center;';
+    const modal = document.createElement('div');
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-label', 'PlantUML diagram with review comments');
+    modal.style.cssText =
+      'width: 94vw; height: 90vh; background: ' + t.iframeBg + '; color: ' + fg + '; ' +
+      'border: 1px solid ' + t.borderCol + '; border-radius: 8px; ' +
+      'box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3); display: flex; flex-direction: column; overflow: hidden;';
+
+    const header = document.createElement('div');
+    header.style.cssText =
+      'display: flex; align-items: center; gap: 12px; padding: 10px 16px; ' +
+      'border-bottom: 1px solid ' + t.borderCol + '; background: ' + t.wrapperBg + ';';
+    const title = document.createElement('div');
+    title.style.cssText = 'flex: 1; min-width: 0; font: 600 14px/1.4 ' + font + '; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;';
+    title.textContent = info.path + ' @ ' + info.sha.slice(0, 7);
+    const status = document.createElement('div');
+    status.style.cssText = 'font: 12px/1.4 ' + font + '; color: ' + t.wrapperFg + '; white-space: nowrap;';
+    status.textContent = 'Loading…';
+    const notesBtn = smallButton(t, 'Hide notes', 'Show the diagram without review notes');
+    notesBtn.disabled = true;
+    const closeBtn = smallButton(t,
+      '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">' +
+      '<path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z"/></svg>',
+      'Close');
+    closeBtn.style.border = '1px solid transparent';
+    header.append(title, status, notesBtn, closeBtn);
+
+    const body = document.createElement('div');
+    body.style.cssText = 'flex: 1; display: flex; min-height: 0;';
+    const iframe = newRendererIframe('PlantUML diagram with review comments');
+    iframe.style.cssText = 'flex: 1; min-width: 0; height: 100%; border: none; display: block; background: ' + t.iframeBg + ';';
+    const panel = document.createElement('div');
+    panel.style.cssText =
+      'flex: 0 0 340px; overflow: auto; border-left: 1px solid ' + t.borderCol + '; ' +
+      'background: ' + t.wrapperBg + '; font: 13px/1.5 ' + font + '; padding: 12px;';
+    body.append(iframe, panel);
+    modal.append(header, body);
+    backdrop.appendChild(modal);
+
+    let closed = false;
+    const onKeyDown = (e) => { if (e.key === 'Escape') { e.preventDefault(); close(); } };
+    function close() {
+      closed = true;
+      document.removeEventListener('keydown', onKeyDown, true);
+      backdrop.remove();
+    }
+    closeBtn.addEventListener('click', close);
+    backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close(); });
+    document.addEventListener('keydown', onKeyDown, true);
+    document.body.appendChild(backdrop);
+
+    const iframeReady = new Promise((resolve) => iframe.addEventListener('load', () => {
+      iframe.contentWindow.postMessage({ type: 'PLANTUML_SET_MODE', mode: 'modal' }, targetOriginFor(iframe));
+      resolve();
+    }, { once: true }));
+
+    // The file and the threads are fetched in parallel and independently:
+    // if the threads can't be loaded we still show the diagram.
+    const rawUrl = '/' + info.owner + '/' + info.repo + '/raw/' + info.sha + '/' +
+                   info.path.split('/').map(encodeURIComponent).join('/');
+    const [srcRes, thrRes] = await Promise.allSettled([
+      fetchWithTimeout(rawUrl, 15000),
+      collectThreads(info.path)
+    ]);
+    await iframeReady;
+    if (closed) return;
+
+    if (srcRes.status !== 'fulfilled') {
+      status.textContent = '';
+      panel.textContent = 'Could not load ' + info.path + ': ' + (srcRes.reason && srcRes.reason.message || srcRes.reason);
+      return;
+    }
+    const source = srcRes.value;
+    let all = [];
+    let threadsError = null;
+    if (thrRes.status === 'fulfilled') all = thrRes.value.threads;
+    else threadsError = String(thrRes.reason && thrRes.reason.message || thrRes.reason);
+    TRACE('review diagram: ' + all.length + ' threads from ' + (thrRes.value && thrRes.value.from));
+
+    const open = all.filter((th) => !th.resolved);
+    const onDiagram = open.filter((th) => th.side === 'R').sort((a, b) => a.line - b.line);
+    const removedLines = open.filter((th) => th.side !== 'R');
+
+    status.textContent = 'Rendering…';
+    const render = (src) => renderInIframe(iframe, src, dark);
+    const result = await NOTES.renderWithNotes(source, onDiagram, render, { dark });
+    if (closed) return;
+
+    // Status line.
+    const resolvedCount = all.length - open.length;
+    const parts = [open.length + ' open comment' + (open.length === 1 ? '' : 's')];
+    if (resolvedCount) parts.push(resolvedCount + ' resolved hidden');
+    status.textContent = parts.join(' · ');
+
+    // Notes on/off toggle (only meaningful if something was placed).
+    let showingNotes = true;
+    const placedAny = result.placements.some((p) => p.mode !== 'unplaced');
+    notesBtn.disabled = !placedAny;
+    notesBtn.style.opacity = placedAny ? '1' : '0.5';
+    notesBtn.addEventListener('click', async () => {
+      showingNotes = !showingNotes;
+      notesBtn.textContent = showingNotes ? 'Hide notes' : 'Show notes';
+      await render(showingNotes ? result.source : source);
+    });
+
+    // Side panel.
+    panel.textContent = '';
+    const heading = (text) => {
+      const h = document.createElement('div');
+      h.textContent = text;
+      h.style.cssText = 'font-weight: 600; margin: 4px 0 8px; color: ' + fg + ';';
+      panel.appendChild(h);
+    };
+    const note = (text, color) => {
+      const p = document.createElement('div');
+      p.textContent = text;
+      p.style.cssText = 'margin: 0 0 10px; color: ' + (color || t.wrapperFg) + ';';
+      panel.appendChild(p);
+    };
+    if (threadsError) note('Could not load review comments: ' + threadsError, '#cf222e');
+    if (result.notesDropped) note('Notes could not be added to this diagram without breaking it; comments are listed here only.', '#9a6700');
+    if (!open.length && !threadsError) note('No open review comments on this file.');
+
+    const MODE_LABEL = {
+      attached: 'note on the diagram',
+      floating: 'note at the end / legend',
+      unplaced: 'not on the diagram'
+    };
+    const card = (th, mode) => {
+      const c = document.createElement('div');
+      c.style.cssText =
+        'border: 1px solid ' + t.borderCol + '; border-radius: 6px; padding: 8px 10px; margin: 0 0 10px; ' +
+        'background: ' + t.iframeBg + ';';
+      const meta = document.createElement('div');
+      meta.style.cssText = 'font-size: 12px; color: ' + t.wrapperFg + '; margin-bottom: 4px;';
+      meta.textContent = (th.side === 'R' ? 'Line ' : 'Removed line ') + th.line + ' · ' + MODE_LABEL[mode];
+      c.appendChild(meta);
+      th.comments.forEach((cm, i) => {
+        const who = document.createElement('div');
+        who.style.cssText = 'font-weight: 600; margin-top: ' + (i ? '6px' : '0') + ';';
+        who.textContent = (i ? '↳ ' : '') + cm.author;
+        const txt = document.createElement('div');
+        txt.style.cssText = 'white-space: pre-wrap; word-break: break-word;';
+        const plain = NOTES.stripMarkdown(cm.body);
+        txt.textContent = plain.length > 1200 ? plain.slice(0, 1199) + '…' : plain;
+        c.append(who, txt);
+      });
+      panel.appendChild(c);
+    };
+    if (onDiagram.length) {
+      heading('Open comments');
+      onDiagram.forEach((th, i) => card(th, result.placements[i].mode));
+    }
+    if (removedLines.length) {
+      heading('On removed lines (not in this version)');
+      removedLines.forEach((th) => card(th, 'unplaced'));
+    }
   }
 
   // ------------------------------------------------------------------
@@ -1056,9 +1600,23 @@
     blocks.forEach(processBlock);
   }
 
+  // Page-level checks (.puml blob view, PR file menus). GitHub mutates
+  // the DOM constantly, so coalesce them into one pass per frame.
+  let pageCheckScheduled = false;
+  function schedulePageChecks() {
+    if (pageCheckScheduled) return;
+    pageCheckScheduled = true;
+    requestAnimationFrame(() => {
+      pageCheckScheduled = false;
+      try { checkBlobView(); } catch (e) { TRACE('checkBlobView failed:', e); }
+      try { augmentFileMenus(); } catch (e) { TRACE('augmentFileMenus failed:', e); }
+    });
+  }
+
   // Initial scan.
   TRACE('starting initial scan');
   scanAndProcess(document.body);
+  schedulePageChecks();
   TRACE('initial scan done');
 
   // ====== DIAGNOSTIC: dump every <pre> / <code> that could be a plantuml block ======
@@ -1096,6 +1654,7 @@
 
   // Watch for dynamically added content.
   const observer = new MutationObserver((mutations) => {
+    schedulePageChecks();
     for (const m of mutations) {
       for (const node of m.addedNodes) {
         if (node.nodeType === Node.ELEMENT_NODE) {
@@ -1105,5 +1664,10 @@
     }
   });
   observer.observe(document.body, { childList: true, subtree: true });
+  // The code view's textarea value changes without a childList mutation
+  // when switching files; navigation events cover that case.
+  window.addEventListener('popstate', schedulePageChecks);
+  document.addEventListener('turbo:load', schedulePageChecks);
+  document.addEventListener('soft-nav:end', schedulePageChecks);
   TRACE('MutationObserver attached');
 })();

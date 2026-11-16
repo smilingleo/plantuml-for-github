@@ -29,6 +29,15 @@ Bob --> Alice: hi
 4. The result is displayed inline in the page, inside a small wrapper with a header bar.
 5. The header bar shows a **toggle button** (top-left of the wrapper) that switches between the rendered diagram and the original PlantUML source. The source view uses GitHub's own syntax highlighting, so it looks exactly as it would without the extension installed.
 
+### `.puml` files and PR reviews
+
+- **Viewing a `.puml` file** (`/blob/...` for `.puml`, `.plantuml`, `.pu`, `.iuml`, `.wsd`) renders the diagram in place of the code listing. The header toggle switches back to GitHub's code view. Add `?plain=1` to the URL to skip rendering.
+- **Reviewing a PR**: the `...` menu of every PlantUML file in *Files changed* gets a **View diagram** entry (new `/changes` view and classic `/files` view). It renders the PR's head version of the file with every **open (unresolved)** review thread drawn as a note on the line it was written on. Resolved threads are left out. A side panel lists the full comment text and says where each note was placed.
+  - Notes attach to sequence messages and participants, activity actions, elements (`note right of X`), and links/`Rel(...)` (`note on link`). Comments on other lines become floating notes or a legend.
+  - If PlantUML rejects a note, that note alone is moved to a safer spot and the diagram is re-rendered, up to 6 renders. If the diagram can't be annotated, it is shown without notes and the comments stay in the panel.
+  - Comment text is sanitised before it reaches PlantUML: no preprocessor directives, macro calls, `<img>`/creole links, or `end note`/`@enduml` injection.
+  - Data sources: the file comes from `/<owner>/<repo>/raw/<head sha>/<path>`. Threads come from a fresh fetch of the PR page's embedded data, falling back to the data loaded with the page, then to the rendered DOM. Each fetch has a timeout, and a thread-loading failure still shows the diagram.
+
 This is the same architecture GitHub already uses for Mermaid — proving that client-side PlantUML can be integrated natively with zero infrastructure cost.
 
 ## Security & permissions
@@ -84,6 +93,7 @@ Save it, then reload the page. The diagram should appear.
 - [X] "Copy SVG" / "Copy source" buttons
 - [x] Theme matching (light/dark) — follows GitHub's color mode
 - [x] Support `puml` and `wsd` language aliases
+- [x] Render `.puml` files and show PR review comments as notes ("View diagram")
 - [ ] Options page (toggle, performance settings)
 - [X] Chrome Web Store publication
 

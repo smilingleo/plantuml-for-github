@@ -45,6 +45,7 @@ OUT = ROOT / f"plantuml-for-github-firefox-{version}.zip"
 FILES = {
     "manifest.json":         FIREFOX_DIR / "manifest.json",
     "content.js":            FIREFOX_DIR / "content.js",
+    "notes.js":              FIREFOX_DIR / "notes.js",
     "renderer.html":         FIREFOX_DIR / "renderer.html",
     "renderer.js":           FIREFOX_DIR / "renderer.js",
     "c4.min.js":             FIREFOX_DIR / "c4.min.js",

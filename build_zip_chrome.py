@@ -39,6 +39,7 @@ OUT = ROOT / f"plantuml-for-github-chrome-{version}.zip"
 FILES = {
     "manifest.json":         CHROME_DIR / "manifest.json",
     "content.js":            CHROME_DIR / "content.js",
+    "notes.js":              CHROME_DIR / "notes.js",
     "renderer.html":         CHROME_DIR / "renderer.html",
     "renderer.js":           CHROME_DIR / "renderer.js",
     "c4.min.js":             CHROME_DIR / "c4.min.js",

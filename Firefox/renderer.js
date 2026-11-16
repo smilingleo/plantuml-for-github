@@ -127,11 +127,14 @@ window.addEventListener('message', (event) => {
   renderDiagram(source, dark)
     .then(({ svg, height }) => {
       TRACE('renderDiagram resolved, svg.len=' + svg.length + ' height=' + height);
+      const diag = diagnoseSvg();
       event.source.postMessage({
         type: 'PLANTUML_RESULT',
         requestId,
         svg,
-        height
+        height,
+        syntaxError: diag.syntaxError,
+        errorLine: diag.errorLine
       }, event.origin);
     })
     .catch((err) => {
@@ -406,6 +409,25 @@ function renderDiagram(source, dark) {
       reject(err);
     }
   });
+}
+
+// ------------------------------------------------------------------
+// PlantUML reports syntax errors by rendering an error *diagram* (the
+// render promise still succeeds). Detect it from the SVG text so the
+// parent can react, e.g. move a review note that broke the diagram.
+// The error image names the offending line as "[From textarea (line N) ]"
+// (1-based, relative to the submitted source).
+// ------------------------------------------------------------------
+function diagnoseSvg() {
+  const svg = output.querySelector('svg');
+  const text = svg ? svg.textContent || '' : '';
+  const syntaxError = /Syntax Error\?/.test(text);
+  let errorLine = null;
+  if (syntaxError) {
+    const m = /\[From textarea \(line (\d+)\)/.exec(text);
+    if (m) errorLine = parseInt(m[1], 10);
+  }
+  return { syntaxError, errorLine };
 }
 
 function showError(message) {
