@@ -3,7 +3,7 @@
   "name": "PlantUML for GitHub",
   "version": "0.3.0",
   "description": "Renders plantuml code blocks directly on GitHub pages using the client-side TeaVM-compiled PlantUML engine.",
-  "author": "Arnaud Roques",
+  "author": "Arnaud Roques, Leo Liu",
   "homepage_url": "https://github.com/plantuml/plantuml",
 
 #if FIREFOX

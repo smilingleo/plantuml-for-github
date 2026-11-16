@@ -4,6 +4,30 @@ A Chrome extension that renders ` ```plantuml ` code blocks directly on GitHub p
 
 **No server. No tokens. No tracking. Zero permissions.**
 
+## What's new compared to the original
+
+This repository continues [plantuml/plantuml-for-github](https://github.com/plantuml/plantuml-for-github) (by Arnaud Roques). The original renders ` ```plantuml ` code blocks in markdown, comments and READMEs. This version keeps all of that and adds support for `.puml` **files**, aimed at reviewing diagrams in pull requests:
+
+| | Original | This version (0.3.0+) |
+|---|---|---|
+| ` ```plantuml ` blocks in markdown | Rendered | Rendered (unchanged) |
+| Opening a `.puml` / `.plantuml` / `.pu` / `.iuml` / `.wsd` file | Shows the source only | **Renders the diagram**, with a toggle back to the source |
+| `.puml` file in a PR's *Files changed* | Source diff only | **"View diagram"** in the file's `...` menu |
+| Review comments on a diagram | Read as text, line by line | **Drawn as notes** on the matching step of the rendered diagram |
+| Resolved review threads | n/a | Left out; only open threads are shown |
+
+The point of the PR feature: when a reviewer comments on one step of a sequence diagram, you can read the comment in context instead of imagining the diagram from the text diff. Details of both features are under [`.puml` files and PR reviews](#puml-files-and-pr-reviews).
+
+Smaller changes:
+- C4-PlantUML standard library (`!include <C4/C4_Context>`, `C4_Container`, `C4_Component`, `C4_Deployment`, `C4_Dynamic`, `C4_Sequence`) works offline, bundled in `c4.min.js`.
+- Diagrams are centered, and the iframe height fits wide or scaled diagrams without extra blank space or scrollbars.
+- The Chrome and Firefox builds are generated from one `template/` directory (`python3 template.py`), and a `v*` tag publishes both zips as a GitHub Release.
+
+## Credits
+
+- **Arnaud Roques** — original author of PlantUML for GitHub and of the PlantUML engine.
+- **Leo Liu** — co-author: `.puml` file rendering, the PR "View diagram" review-notes feature, C4 library support, and layout fixes.
+
 ## Installation
 
 - From the [Chrome Web Store](https://chromewebstore.google.com/detail/plantuml-for-github/lbokhidfopkdehkmlmpaabacljoediic)
