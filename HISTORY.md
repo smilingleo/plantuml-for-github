@@ -4,6 +4,20 @@ All notable changes to **PlantUML for GitHub** are documented here.
 The project is published as two browser extensions (Chrome and Firefox)
 that share the same version number from `0.2.2` onward.
 
+## 0.3.0
+
+- **`.puml` files render as diagrams.** Opening a `.puml`, `.plantuml`,
+  `.pu`, `.iuml` or `.wsd` file on GitHub shows the diagram in place of
+  the code listing; the header toggle switches back to the source.
+  Add `?plain=1` to the URL to skip rendering.
+- **"View diagram" in pull requests.** The `...` menu of every
+  PlantUML file in *Files changed* (new and classic views) renders the
+  PR's version of the file with each unresolved review comment drawn as
+  a note on its line, with a side panel listing the full comments.
+  Resolved threads are left out. Notes the diagram can't accept are
+  moved or dropped without breaking the render.
+- Comment text is sanitised before it is spliced into PlantUML source.
+
 ## 0.2.4
 
 - Added a **right-click context menu** on the rendered diagram with

@@ -11,3 +11,6 @@ Thumbs.db
 # Node (in case you add tooling later)
 node_modules/
 npm-debug.log*
+
+# Local build output (published via GitHub Releases)
+dist/

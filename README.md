@@ -8,6 +8,7 @@ A Chrome extension that renders ` ```plantuml ` code blocks directly on GitHub p
 
 - From the [Chrome Web Store](https://chromewebstore.google.com/detail/plantuml-for-github/lbokhidfopkdehkmlmpaabacljoediic)
 - From the [Firefox Add-ons Catalog](https://addons.mozilla.org/en-US/firefox/addon/plantuml-for-github/)
+- Or grab the latest build from this repository's [Releases](../../releases) page (Chrome: unzip, then `chrome://extensions` → Developer mode → *Load unpacked*)
 
 
 ## Live demo
